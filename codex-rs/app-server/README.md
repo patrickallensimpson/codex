@@ -206,6 +206,54 @@ Read the selection from `threadSettings.disabledPluginIds` in
 across resume. Forks restore the selection from the history retained at the
 requested fork boundary.
 
+# Saved ChatGPT account sessions
+
+Account sessions let a client switch ChatGPT identities while keeping one shared
+`CODEX_HOME`, so threads, rollouts, configuration, skills, and memories remain in
+the same local store. Credentials remain isolated by session through the configured
+auth backend. In file mode, each saved login uses
+`$CODEX_HOME/account-sessions/<session-id>/auth.json`; `account-sessions.json`
+contains metadata only.
+
+The first `accountSession/list` lazily imports the current ChatGPT login. To add
+another identity, complete the ordinary `account/login/start` flow and then call:
+
+```json
+{ "method": "accountSession/add", "id": 20, "params": { "switchToAddedAccount": true } }
+```
+
+List sessions, refreshing the available ChatGPT workspaces when the backend is
+reachable:
+
+```json
+{ "method": "accountSession/list", "id": 21, "params": { "refreshWorkspaceMetadata": true } }
+```
+
+Activate a saved identity and workspace using values from that response:
+
+```json
+{
+  "method": "accountSession/switch",
+  "id": 22,
+  "params": { "sessionId": "<session-uuid>", "accountId": "<workspace-account-id>" }
+}
+```
+
+Remove a saved login:
+
+```json
+{
+  "method": "accountSession/logout",
+  "id": 23,
+  "params": { "sessionId": "<session-uuid>" }
+}
+```
+
+Adding, switching, and removing account sessions are rejected while any loaded
+thread has an active turn. A successful mutation reloads app-server auth and emits
+`account/updated`; existing threads remain available and use the newly active
+account on their next turn.
+
 # MCP server capabilities
 
 `mcpServerStatus/list` returns `serverCapabilities` for each initialized MCP server

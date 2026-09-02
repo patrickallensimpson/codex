@@ -87,6 +87,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_watch_manager: ThreadWatchManager,
     skills_watcher: Arc<SkillsWatcher>,
     turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
+    account_change_barrier: Arc<Semaphore>,
 }
 
 fn map_additional_context(
@@ -150,6 +151,7 @@ impl TurnRequestProcessor {
         thread_watch_manager: ThreadWatchManager,
         skills_watcher: Arc<SkillsWatcher>,
         turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
+        account_change_barrier: Arc<Semaphore>,
     ) -> Self {
         let agent_runner = AgentRunner::new(Arc::downgrade(&thread_manager));
         Self {
@@ -166,6 +168,7 @@ impl TurnRequestProcessor {
             thread_watch_manager,
             skills_watcher,
             turn_cost_worker,
+            account_change_barrier,
         }
     }
 
@@ -176,6 +179,9 @@ impl TurnRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let _account_stable = self.account_change_barrier.try_acquire().map_err(|_| {
+            invalid_request("cannot start a turn while the active account is changing")
+        })?;
         validate_user_input_image_urls(&params.input)?;
         self.turn_start_inner(
             request_id,
