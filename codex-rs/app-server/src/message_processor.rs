@@ -390,7 +390,7 @@ impl MessageProcessor {
         let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
         let app_list_shutdown_token = CancellationToken::new();
         let request_serialization_queues = RequestSerializationQueues::default();
-        let account_change_barrier = Arc::new(Semaphore::new(/*permits*/ 1));
+        let account_change_barrier = Arc::new(tokio::sync::RwLock::new(()));
         let config_processor = ConfigRequestProcessor::new(
             outgoing.clone(),
             config_manager.clone(),

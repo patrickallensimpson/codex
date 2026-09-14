@@ -223,6 +223,11 @@ impl<'a> AccountSessionsStore<'a> {
                 .auth()
                 .await
                 .ok_or_else(|| std::io::Error::other("Saved ChatGPT account session is invalid"))?;
+            // auth() may rotate and persist OAuth credentials. Apply the workspace
+            // response to that record so an omitted refresh token keeps the new one.
+            auth_json = self.load_session_auth(session_id)?.ok_or_else(|| {
+                std::io::Error::other("Saved ChatGPT account session credentials not found")
+            })?;
             let client = BackendClient::from_auth(
                 self.chatgpt_base_url,
                 &auth,

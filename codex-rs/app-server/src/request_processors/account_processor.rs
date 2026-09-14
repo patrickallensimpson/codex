@@ -91,7 +91,7 @@ pub(crate) struct AccountRequestProcessor {
     config: Arc<Config>,
     config_manager: ConfigManager,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
-    account_change_barrier: Arc<Semaphore>,
+    account_change_barrier: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl AccountRequestProcessor {
@@ -101,7 +101,7 @@ impl AccountRequestProcessor {
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
         config_manager: ConfigManager,
-        account_change_barrier: Arc<Semaphore>,
+        account_change_barrier: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         Self {
             auth_manager,
@@ -138,15 +138,15 @@ impl AccountRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "account mutation and auth reload must exclude turn admission until complete"
+    )]
     pub(crate) async fn add_account_session(
         &self,
         params: AccountSessionsAddParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        let _account_change = self
-            .account_change_barrier
-            .acquire()
-            .await
-            .map_err(|err| internal_error(format!("account change barrier closed: {err}")))?;
+        let _account_change = self.account_change_barrier.write().await;
         self.ensure_no_active_turns().await?;
         let response = self
             .account_sessions_store()
@@ -168,15 +168,15 @@ impl AccountRequestProcessor {
             .map_err(|err| internal_error(format!("failed to list account sessions: {err}")))
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "account mutation and auth reload must exclude turn admission until complete"
+    )]
     pub(crate) async fn logout_account_session(
         &self,
         params: AccountSessionsLogoutParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        let _account_change = self
-            .account_change_barrier
-            .acquire()
-            .await
-            .map_err(|err| internal_error(format!("account change barrier closed: {err}")))?;
+        let _account_change = self.account_change_barrier.write().await;
         self.ensure_no_active_turns().await?;
         let response = self
             .account_sessions_store()
@@ -187,15 +187,15 @@ impl AccountRequestProcessor {
         Ok(Some(response.into()))
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "account mutation and auth reload must exclude turn admission until complete"
+    )]
     pub(crate) async fn switch_account_session(
         &self,
         params: AccountSessionsSwitchParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        let _account_change = self
-            .account_change_barrier
-            .acquire()
-            .await
-            .map_err(|err| internal_error(format!("account change barrier closed: {err}")))?;
+        let _account_change = self.account_change_barrier.write().await;
         self.ensure_no_active_turns().await?;
         let response = self
             .account_sessions_store()
