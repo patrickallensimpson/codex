@@ -3,6 +3,14 @@
 export type { Account } from "./Account";
 export type { AccountLoginCompletedNotification } from "./AccountLoginCompletedNotification";
 export type { AccountRateLimitsUpdatedNotification } from "./AccountRateLimitsUpdatedNotification";
+export type { AccountSession } from "./AccountSession";
+export type { AccountSessionWorkspace } from "./AccountSessionWorkspace";
+export type { AccountSessionWorkspaceKind } from "./AccountSessionWorkspaceKind";
+export type { AccountSessionsAddParams } from "./AccountSessionsAddParams";
+export type { AccountSessionsListParams } from "./AccountSessionsListParams";
+export type { AccountSessionsLogoutParams } from "./AccountSessionsLogoutParams";
+export type { AccountSessionsResponse } from "./AccountSessionsResponse";
+export type { AccountSessionsSwitchParams } from "./AccountSessionsSwitchParams";
 export type { AccountTokenUsageDailyBucket } from "./AccountTokenUsageDailyBucket";
 export type { AccountTokenUsageSummary } from "./AccountTokenUsageSummary";
 export type { AccountUpdatedNotification } from "./AccountUpdatedNotification";

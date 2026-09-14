@@ -91,6 +91,7 @@ pub(crate) struct AccountRequestProcessor {
     config: Arc<Config>,
     config_manager: ConfigManager,
     active_login: Arc<Mutex<Option<ActiveLogin>>>,
+    account_change_barrier: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl AccountRequestProcessor {
@@ -100,6 +101,7 @@ impl AccountRequestProcessor {
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
         config_manager: ConfigManager,
+        account_change_barrier: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         Self {
             auth_manager,
@@ -108,6 +110,7 @@ impl AccountRequestProcessor {
             config,
             config_manager,
             active_login: Arc::new(Mutex::new(None)),
+            account_change_barrier,
         }
     }
 
@@ -133,6 +136,74 @@ impl AccountRequestProcessor {
         self.cancel_login_response(params)
             .await
             .map(|response| Some(response.into()))
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "account mutation and auth reload must exclude turn admission until complete"
+    )]
+    pub(crate) async fn add_account_session(
+        &self,
+        params: AccountSessionsAddParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let _account_change = self.account_change_barrier.write().await;
+        self.ensure_no_active_turns().await?;
+        let response = self
+            .account_sessions_store()
+            .add(params.switch_to_added_account)
+            .await
+            .map_err(|err| internal_error(format!("failed to add account session: {err}")))?;
+        self.sync_auth_after_account_session_change().await;
+        Ok(Some(response.into()))
+    }
+
+    pub(crate) async fn list_account_sessions(
+        &self,
+        params: AccountSessionsListParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.account_sessions_store()
+            .list(params.refresh_workspace_metadata)
+            .await
+            .map(|response| Some(response.into()))
+            .map_err(|err| internal_error(format!("failed to list account sessions: {err}")))
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "account mutation and auth reload must exclude turn admission until complete"
+    )]
+    pub(crate) async fn logout_account_session(
+        &self,
+        params: AccountSessionsLogoutParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let _account_change = self.account_change_barrier.write().await;
+        self.ensure_no_active_turns().await?;
+        let response = self
+            .account_sessions_store()
+            .logout(&params.session_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to log out account session: {err}")))?;
+        self.sync_auth_after_account_session_change().await;
+        Ok(Some(response.into()))
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "account mutation and auth reload must exclude turn admission until complete"
+    )]
+    pub(crate) async fn switch_account_session(
+        &self,
+        params: AccountSessionsSwitchParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let _account_change = self.account_change_barrier.write().await;
+        self.ensure_no_active_turns().await?;
+        let response = self
+            .account_sessions_store()
+            .switch(&params.session_id, &params.account_id)
+            .await
+            .map_err(|err| internal_error(format!("failed to switch account session: {err}")))?;
+        self.sync_auth_after_account_session_change().await;
+        Ok(Some(response.into()))
     }
 
     pub(crate) async fn get_account(
@@ -193,6 +264,53 @@ impl AccountRequestProcessor {
         if let Some(active_login) = guard.take() {
             drop(active_login);
         }
+    }
+
+    fn account_sessions_store(&self) -> AccountSessionsStore<'_> {
+        AccountSessionsStore::new(
+            &self.config.codex_home,
+            self.config.cli_auth_credentials_store_mode,
+            self.config.auth_keyring_backend_kind(),
+            &self.config.chatgpt_base_url,
+            self.config.auth_route_config(),
+            self.config.http_client_factory(),
+        )
+    }
+
+    async fn ensure_no_active_turns(&self) -> Result<(), JSONRPCErrorError> {
+        for thread_id in self.thread_manager.list_thread_ids().await {
+            if let Ok(thread) = self.thread_manager.get_thread(thread_id).await
+                && matches!(thread.agent_status().await, AgentStatus::Running)
+            {
+                return Err(invalid_request(
+                    "account sessions cannot change while a turn is active",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn sync_auth_after_account_session_change(&self) {
+        self.auth_manager.reload().await;
+        self.config_manager.replace_cloud_config_bundle_loader(
+            self.auth_manager.clone(),
+            self.config.chatgpt_base_url.clone(),
+            self.config.http_client_factory(),
+        );
+        self.config_manager
+            .sync_default_client_residency_requirement()
+            .await;
+        Self::maybe_refresh_plugin_caches_for_current_config(
+            &self.config_manager,
+            &self.thread_manager,
+            self.auth_manager.auth_cached(),
+        )
+        .await;
+        self.outgoing
+            .send_server_notification(ServerNotification::AccountUpdated(
+                self.current_account_updated_notification(),
+            ))
+            .await;
     }
 
     pub(crate) fn clear_external_auth(&self) {

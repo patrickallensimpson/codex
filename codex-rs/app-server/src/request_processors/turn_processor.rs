@@ -87,6 +87,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_watch_manager: ThreadWatchManager,
     skills_watcher: Arc<SkillsWatcher>,
     turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
+    account_change_barrier: Arc<tokio::sync::RwLock<()>>,
 }
 
 fn map_additional_context(
@@ -150,6 +151,7 @@ impl TurnRequestProcessor {
         thread_watch_manager: ThreadWatchManager,
         skills_watcher: Arc<SkillsWatcher>,
         turn_cost_worker: Option<crate::turn_cost_worker::TurnCostWorkerHandle>,
+        account_change_barrier: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         let agent_runner = AgentRunner::new(Arc::downgrade(&thread_manager));
         Self {
@@ -166,9 +168,14 @@ impl TurnRequestProcessor {
             thread_watch_manager,
             skills_watcher,
             turn_cost_worker,
+            account_change_barrier,
         }
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "turn admission must observe stable auth until the turn is registered as active"
+    )]
     pub(crate) async fn turn_start(
         &self,
         request_id: ConnectionRequestId,
@@ -176,6 +183,11 @@ impl TurnRequestProcessor {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        // Independent threads may enter together; an account mutation must wait
+        // until admission finishes and then recheck whether any turn is active.
+        let _account_stable = self.account_change_barrier.try_read().map_err(|_| {
+            invalid_request("cannot start a turn while the active account is changing")
+        })?;
         validate_user_input_image_urls(&params.input)?;
         self.turn_start_inner(
             request_id,

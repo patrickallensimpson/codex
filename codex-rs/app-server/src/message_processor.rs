@@ -390,6 +390,7 @@ impl MessageProcessor {
         let thread_list_state_permit = Arc::new(Semaphore::new(/*permits*/ 1));
         let app_list_shutdown_token = CancellationToken::new();
         let request_serialization_queues = RequestSerializationQueues::default();
+        let account_change_barrier = Arc::new(tokio::sync::RwLock::new(()));
         let config_processor = ConfigRequestProcessor::new(
             outgoing.clone(),
             config_manager.clone(),
@@ -410,6 +411,7 @@ impl MessageProcessor {
             outgoing.clone(),
             Arc::clone(&config),
             config_manager.clone(),
+            Arc::clone(&account_change_barrier),
         );
         let apps_processor = AppsRequestProcessor::new(
             auth_manager.clone(),
@@ -528,6 +530,7 @@ impl MessageProcessor {
             thread_watch_manager,
             Arc::clone(&skills_watcher),
             turn_cost_worker.as_ref().map(TurnCostWorker::handle),
+            account_change_barrier,
         );
         if let Some(startup_config) = plugin_startup_tasks {
             // Keep plugin startup warmups aligned at app-server startup.
@@ -1735,6 +1738,18 @@ impl MessageProcessor {
             }
             ClientRequest::CancelLoginAccount { params, .. } => {
                 self.account_processor.cancel_login_account(params).await
+            }
+            ClientRequest::AccountSessionsAdd { params, .. } => {
+                self.account_processor.add_account_session(params).await
+            }
+            ClientRequest::AccountSessionsList { params, .. } => {
+                self.account_processor.list_account_sessions(params).await
+            }
+            ClientRequest::AccountSessionsLogout { params, .. } => {
+                self.account_processor.logout_account_session(params).await
+            }
+            ClientRequest::AccountSessionsSwitch { params, .. } => {
+                self.account_processor.switch_account_session(params).await
             }
             ClientRequest::GetAccount { params, .. } => {
                 self.account_processor.get_account(params).await
